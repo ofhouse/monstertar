@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly SCRIPT_NAME="$(basename $0)"
+readonly ONE_KB=1024
+readonly ONE_MB=$((1024 * ONE_KB))
+
+# Exit codes
+readonly INVALID_USAGE_EXIT_CODE=1
+
+##
+# Write error to stderr
+# Arguments:
+#   $1 string to output
+##
+err() {
+  echo "Error: $@" >&2
+}
+
+##
+# Print help and exit
+# Arguments:
+#   $1 int exit code
+# Output:
+#   string help
+##
+printUsageAndExitWith() {
+  printf "Usage:\n"
+  exit $1
+}
+
+##
+# Helper for parsing the command line.
+##
+assertArgument() {
+  if [[ $# -lt 2 ]]; then
+    err "Option $1 needs an argument."
+    exit $INVALID_USAGE_EXIT_CODE
+  fi
+}
+
+##
+# Parse command line and set global variables
+# Arguments:
+#   $@ command line
+# Globals:
+#   OUTPUT_DIR  string
+##
+parseCommandLine() {
+  OUTPUT_DIR=""
+  TARGET_SIZE=0
+  FILE_SIZE=0
+
+  # Parse options
+  local remaining=
+  while [[ $# > 0 ]]; do
+    local key="$1"
+    case ${key} in
+      -t|--total-size) assertArgument $@; TARGET_SIZE=$2; shift;;
+      -f|--file-size)  assertArgument $@; FILE_SIZE=$2; shift;;
+      -*)              err "Unknown option $1"
+                       printUsageAndExitWith ${INVALID_USAGE_EXIT_CODE};;
+      *)               remaining="${remaining} \"${key}\"";;
+    esac
+    shift
+  done
+
+  # Set the non-parameters back into the positional parameters ($1 $2 ..)
+  eval set -- ${remaining}
+
+  # Parse arguments
+  if [[ $# != 1 ]]; then
+    err "You need to specify an output path, e.g. /tmp/monstertar-files"
+    printUsageAndExitWith ${INVALID_USAGE_EXIT_CODE}
+  fi
+
+  OUTPUT_DIR="$1"
+
+  # Freeze globals
+  readonly FILE_SIZE
+  readonly OUTPUT_DIR
+  readonly TARGET_SIZE
+}
+
+
+createFiles() {
+  # Create directory if it doesn't exist
+  if [ ! -d "$OUTPUT_DIR" ]; then
+    mkdir -p "$OUTPUT_DIR"
+  fi
+
+  echo "FileSize: ${FILE_SIZE}kb, TotalSize: ${TARGET_SIZE}mb"
+  echo "Creating files..."
+
+  target_size_bytes=$((TARGET_SIZE * ONE_MB))
+  total_size=0
+  file_count=0
+  total_file_count=0
+
+
+  # Store files in batches of 10_000 per directory
+  batch=0
+  batch_dir=$( printf %06d "$batch" )
+  mkdir "$OUTPUT_DIR/$batch_dir"
+
+  while [ $total_size -lt $target_size_bytes ]; do
+    file_size_bytes=$(( FILE_SIZE * ONE_KB ))
+
+    # Generate a random filename
+    filename="$( printf %05d "$file_count" ).bin"
+
+    # Generate random content and write to file
+    head -c $file_size_bytes /dev/urandom > "$OUTPUT_DIR/$batch_dir/$filename"
+
+    # Update total size and file count
+    total_size=$((total_size + file_size_bytes))
+    file_count=$((file_count + 1))
+    total_file_count=$((total_file_count + 1))
+
+    # Every 10_000 files create a new batch
+    if !(($file_count % 10000)); then
+      batch=$((batch + 1))
+      batch_dir=$( printf %05d "$batch" )
+      mkdir "$OUTPUT_DIR/$batch_dir"
+      file_count=0
+    fi
+
+    if !(($file_count % 100)); then
+      echo "Created $total_file_count files..."
+    fi
+  done
+
+  echo "Fished! Created $total_file_count files."
+
+}
+
+##
+# Main routine
+##
+main() {
+  parseCommandLine $@
+  createFiles
+}
+
+main $@
